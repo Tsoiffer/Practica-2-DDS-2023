@@ -2,7 +2,10 @@ package ar.utn.dds.copiame;
 
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.TelegramBotsApi;
+import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.Document;
+import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
@@ -10,31 +13,60 @@ import org.telegram.telegrambots.updatesreceivers.DefaultBotSession;
 public class CopiameBot extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
-// Esta función se invocará cuando nuestro bot reciba un mensaje
-// Se obtiene el mensaje escrito por el usuario
-        final String messageTextReceived = update.getMessage().getText();
-// Se obtiene el id de chat del usuario
-        Long chatId = update.getMessage().getChatId();
-// Se crea un objeto mensaje
-        SendMessage message = new SendMessage();
-        message.setChatId(chatId.toString());
-        message.setText(messageTextReceived);
-        try {
-// Se envía el mensaje
-            execute(message);
-        } catch (TelegramApiException e) {
-            e.printStackTrace();
+        Message message = update.getMessage();
+        if (message.hasDocument()) {
+            Document document = message.getDocument();
+            if (document.getMimeType().equals("application/zip")) {
+                try {
+                    // Obtiene el archivo
+                    GetFile getFile = new GetFile();
+                    getFile.setFileId(message.getDocument().getFileId());
+                    org.telegram.telegrambots.meta.api.objects.File file =
+                            execute(getFile);
+                    java.io.File downloadedFile = downloadFile(file);
+                    // Descomprime los archivos en un directorio
+                    String destDirectory = System.getenv("RUTA_TEMPORAL") +    message.getDocument().getFileId();
+                    UnzipUtility.unzip(downloadedFile, destDirectory );
+
+                    // Procesa al lote
+                    Lote lote = new Lote(destDirectory);
+                    lote.validar();
+                    lote.cargar();
+                    float umbral = 0.5f;
+                    AnalsisDeCopia analisis = new AnalsisDeCopia(umbral, lote);
+                    ResultadoLote resultado = analisis.procesar();
+
+                    // Genera la salida y manda el mensaje
+                    String se_copiaron = "";
+                    for (ParDocumentos par : resultado.getPosiblesCopias()) {
+                        se_copiaron += par.getDocumento1().getAutor() + " " +
+                                par.getDocumento2().getAutor() + "\n";
+                    }
+                    // Envia el mensaje al usuario
+                    SendMessage responseMsg = new SendMessage();
+                    responseMsg.setChatId(message.getChatId());
+                    if(se_copiaron.isBlank()) {
+                        responseMsg.setText("No se copió nadie");
+                    } else {
+                        responseMsg.setText("Se copiaron: \n" + se_copiaron);
+                    }
+                    execute(responseMsg);
+                } catch (Exception e ) {
+                    e.printStackTrace();
+                }
+            }
         }
+
     }
     @Override
     public String getBotUsername() {
 // Se devuelve el nombre que dimos al bot al crearlo con el BotFather
-        return "copiame_tsoiffer_bot";
+        return System.getenv("NOMBRE_BOT");
     }
     @Override
     public String getBotToken() {
 // Se devuelve el token que nos generó el BotFather de nuestro bot
-        return "6037887730:AAFqgpEHilS2qxGXTtomZlD-MFouyt_g7gQ";
+        return System.getenv("TOKEN_BOT");
     }
     public static void main(String[] args)
             throws TelegramApiException {
